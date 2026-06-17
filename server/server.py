@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-# CartRadar Backend v4 — Caching, demo mode, detailed error reporting
-import asyncio, os, re, time, json, random, sys, hashlib
+# CartRadar v5 — Single URL app (API + frontend in one server)
+# Visit http://localhost:8766 → full grocery search app
+import asyncio, os, re, time, json, random, sys, hashlib, io
 sys.path = [p for p in sys.path if 'hermes-agent' not in p]
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-app = FastAPI(title="CartRadar API v4")
+app = FastAPI(title="CartRadar")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 TIMEOUT = 20
-CACHE_TTL = 300  # 5 min
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+CACHE_TTL = 300
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
 KROGER_CLIENT_ID = os.getenv("KROGER_CLIENT_ID", "")
 KROGER_CLIENT_SECRET = os.getenv("KROGER_CLIENT_SECRET", "")
+WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
+# Fix for EC2 deployment where server.py is in root dir
+if not os.path.exists(WEB_DIR):
+    WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 class SearchRequest(BaseModel):
     query: str
@@ -34,21 +40,18 @@ class SearchResponse(BaseModel):
 
 # ===== Cache =====
 _cache: dict[str, tuple[float, list, dict]] = {}
-
-def cache_key(query: str, zipcode: str) -> str:
-    return hashlib.md5(f"{query}:{zipcode}".encode()).hexdigest()
-
-def cache_get(query: str, zipcode: str):
-    key = cache_key(query, zipcode)
+def cache_key(q: str, z: str) -> str:
+    return hashlib.md5(f"{q}:{z}".encode()).hexdigest()
+def cache_get(q: str, z: str):
+    key = cache_key(q, z)
     if key in _cache:
         ts, items, results = _cache[key]
         if time.time() - ts < CACHE_TTL:
             return items, results
         del _cache[key]
     return None, None
-
-def cache_set(query: str, zipcode: str, items: list, results: dict):
-    _cache[cache_key(query, zipcode)] = (time.time(), items, results)
+def cache_set(q: str, z: str, items: list, results: dict):
+    _cache[cache_key(q, z)] = (time.time(), items, results)
 
 # ===== Utils =====
 def parse_price(text) -> float:
@@ -67,75 +70,134 @@ def calc_unit_price(price: float, size_str: str) -> str:
 def clean_name(name: str) -> str:
     return re.sub(r'\s+', ' ', name).strip()[:120]
 
-# ===== DEMO MODE =====
+# ===== DEMO DATA (correct brand → store mapping) =====
+STORE_BRAND_MAP = {
+    "walmart":    {"brand": "Great Value",    "prefix": "Great Value"},
+    "kroger":     {"brand": "Kroger",         "prefix": "Kroger"},
+    "target":     {"brand": "Good & Gather",  "prefix": "Market Pantry"},
+    "aldi":       {"brand": "Friendly Farms", "prefix": "Friendly Farms"},
+    "albertsons": {"brand": "Lucerne",        "prefix": "Lucerne"},
+    "publix":     {"brand": "Publix",         "prefix": "Publix"},
+    "wholefoods": {"brand": "365 by Whole Foods", "prefix": "365"},
+    "heb":        {"brand": "H-E-B",          "prefix": "H-E-B"},
+}
+
 DEMO_ITEMS = {
     "milk": [
-        {"name": "Great Value Whole Milk", "price": 3.24, "size": "1 gal", "url": "https://www.walmart.com/ip/10451075", "unitPrice": "$0.20/floz", "upc": "01111042050"},
-        {"name": "Kroger Whole Milk", "price": 3.49, "size": "1 gal", "url": "https://www.kroger.com/p/whole-milk/0001111042050", "unitPrice": "$0.22/floz", "upc": "01111042050"},
-        {"name": "Market Pantry Whole Milk", "price": 3.39, "size": "1 gal", "url": "https://www.target.com/p/milk/-/A-12946294", "unitPrice": "$0.21/floz", "upc": "01111042050"},
-        {"name": "Friendly Farms Whole Milk", "price": 2.89, "size": "1 gal", "url": "https://www.aldi.us/product/whole-milk", "unitPrice": "$0.18/floz", "upc": "01111042050"},
-        {"name": "Lucerne Whole Milk", "price": 3.79, "size": "1 gal", "url": "https://www.albertsons.com/product/milk", "unitPrice": "$0.24/floz", "upc": "01111042050"},
-        {"name": "Publix Whole Milk", "price": 3.59, "size": "1 gal", "url": "https://www.publix.com/product/milk", "unitPrice": "$0.22/floz", "upc": "01111042050"},
-        {"name": "365 Whole Milk", "price": 4.29, "size": "1 gal", "url": "https://www.wholefoodsmarket.com/product/milk", "unitPrice": "$0.27/floz", "upc": "01111042050"},
-        {"name": "H-E-B Whole Milk", "price": 3.19, "size": "1 gal", "url": "https://www.heb.com/product/milk", "unitPrice": "$0.20/floz", "upc": "01111042050"},
+        {"name":"Great Value Whole Milk","price":3.24,"size":"1 gal","url":"https://www.walmart.com/ip/10451075","unitPrice":"$0.20/floz","store":"walmart"},
+        {"name":"Kroger Whole Milk","price":3.49,"size":"1 gal","url":"https://www.kroger.com/p/whole-milk","unitPrice":"$0.22/floz","store":"kroger"},
+        {"name":"Market Pantry Whole Milk","price":3.39,"size":"1 gal","url":"https://www.target.com/p/milk","unitPrice":"$0.21/floz","store":"target"},
+        {"name":"Friendly Farms Whole Milk","price":2.89,"size":"1 gal","url":"https://www.aldi.us/product/whole-milk","unitPrice":"$0.18/floz","store":"aldi"},
+        {"name":"Lucerne Whole Milk","price":3.79,"size":"1 gal","url":"https://www.albertsons.com/product/milk","unitPrice":"$0.24/floz","store":"albertsons"},
+        {"name":"Publix Whole Milk","price":3.59,"size":"1 gal","url":"https://www.publix.com/product/milk","unitPrice":"$0.22/floz","store":"publix"},
+        {"name":"365 by Whole Foods Organic Whole Milk","price":4.29,"size":"1 gal","url":"https://www.wholefoodsmarket.com/product/milk","unitPrice":"$0.27/floz","store":"wholefoods"},
+        {"name":"H-E-B Whole Milk","price":3.19,"size":"1 gal","url":"https://www.heb.com/product/milk","unitPrice":"$0.20/floz","store":"heb"},
     ],
     "eggs": [
-        {"name": "Great Value Large White Eggs", "price": 3.98, "size": "12 ct", "url": "https://www.walmart.com/ip/eggs", "unitPrice": "$0.33/ct", "upc": "01111088999"},
-        {"name": "Kroger Large White Eggs", "price": 4.29, "size": "12 ct", "url": "https://www.kroger.com/p/eggs", "unitPrice": "$0.36/ct", "upc": "01111088999"},
-        {"name": "Good & Gather Large White Eggs", "price": 4.19, "size": "12 ct", "url": "https://www.target.com/p/eggs", "unitPrice": "$0.35/ct", "upc": "01111088999"},
-        {"name": "Goldhen Large White Eggs", "price": 3.49, "size": "12 ct", "url": "https://www.aldi.us/product/eggs", "unitPrice": "$0.29/ct", "upc": "01111088999"},
-        {"name": "Lucerne Large White Eggs", "price": 4.49, "size": "12 ct", "url": "https://www.albertsons.com/product/eggs", "unitPrice": "$0.37/ct", "upc": "01111088999"},
-        {"name": "365 Large White Eggs", "price": 5.29, "size": "12 ct", "url": "https://www.wholefoodsmarket.com/product/eggs", "unitPrice": "$0.44/ct", "upc": "01111088999"},
-        {"name": "H-E-B Large White Eggs", "price": 3.89, "size": "12 ct", "url": "https://www.heb.com/product/eggs", "unitPrice": "$0.32/ct", "upc": "01111088999"},
+        {"name":"Great Value Large White Eggs","price":3.98,"size":"12 ct","url":"https://www.walmart.com/ip/eggs","unitPrice":"$0.33/ct","store":"walmart"},
+        {"name":"Kroger Large White Eggs","price":4.29,"size":"12 ct","url":"https://www.kroger.com/p/eggs","unitPrice":"$0.36/ct","store":"kroger"},
+        {"name":"Good & Gather Large White Eggs","price":4.19,"size":"12 ct","url":"https://www.target.com/p/eggs","unitPrice":"$0.35/ct","store":"target"},
+        {"name":"Goldhen Large White Eggs","price":3.49,"size":"12 ct","url":"https://www.aldi.us/product/eggs","unitPrice":"$0.29/ct","store":"aldi"},
+        {"name":"Lucerne Large White Eggs","price":4.49,"size":"12 ct","url":"https://www.albertsons.com/product/eggs","unitPrice":"$0.37/ct","store":"albertsons"},
+        {"name":"Publix Large White Eggs","price":4.09,"size":"12 ct","url":"https://www.publix.com/product/eggs","unitPrice":"$0.34/ct","store":"publix"},
+        {"name":"365 by Whole Foods Large Brown Eggs","price":5.29,"size":"12 ct","url":"https://www.wholefoodsmarket.com/product/eggs","unitPrice":"$0.44/ct","store":"wholefoods"},
+        {"name":"H-E-B Large White Eggs","price":3.89,"size":"12 ct","url":"https://www.heb.com/product/eggs","unitPrice":"$0.32/ct","store":"heb"},
     ],
-    "chicken breast": [
-        {"name": "Great Value Boneless Chicken Breast", "price": 8.97, "size": "3 lb", "url": "https://www.walmart.com/ip/chicken-breast", "unitPrice": "$2.99/lb", "upc": "01111032001"},
-        {"name": "Kroger Boneless Chicken Breast", "price": 9.99, "size": "3 lb", "url": "https://www.kroger.com/p/chicken-breast", "unitPrice": "$3.33/lb", "upc": "01111032001"},
-        {"name": "Target Boneless Chicken Breast", "price": 9.49, "size": "3 lb", "url": "https://www.target.com/p/chicken-breast", "unitPrice": "$3.16/lb", "upc": "01111032001"},
-        {"name": "Kirkwood Boneless Chicken Breast", "price": 7.99, "size": "3 lb", "url": "https://www.aldi.us/product/chicken-breast", "unitPrice": "$2.66/lb", "upc": "01111032001"},
-        {"name": "Publix Boneless Chicken Breast", "price": 10.49, "size": "3 lb", "url": "https://www.publix.com/product/chicken", "unitPrice": "$3.50/lb", "upc": "01111032001"},
-        {"name": "H-E-B Boneless Chicken Breast", "price": 8.49, "size": "3 lb", "url": "https://www.heb.com/product/chicken", "unitPrice": "$2.83/lb", "upc": "01111032001"},
+    "chicken": [
+        {"name":"Great Value Boneless Chicken Breast","price":8.97,"size":"3 lb","url":"https://www.walmart.com/ip/chicken","unitPrice":"$2.99/lb","store":"walmart"},
+        {"name":"Kroger Boneless Chicken Breast","price":9.99,"size":"3 lb","url":"https://www.kroger.com/p/chicken","unitPrice":"$3.33/lb","store":"kroger"},
+        {"name":"Good & Gather Boneless Chicken Breast","price":9.49,"size":"3 lb","url":"https://www.target.com/p/chicken","unitPrice":"$3.16/lb","store":"target"},
+        {"name":"Kirkwood Boneless Chicken Breast","price":7.99,"size":"3 lb","url":"https://www.aldi.us/product/chicken","unitPrice":"$2.66/lb","store":"aldi"},
+        {"name":"Lucerne Boneless Chicken Breast","price":10.49,"size":"3 lb","url":"https://www.albertsons.com/product/chicken","unitPrice":"$3.50/lb","store":"albertsons"},
+        {"name":"Publix Boneless Chicken Breast","price":10.49,"size":"3 lb","url":"https://www.publix.com/product/chicken","unitPrice":"$3.50/lb","store":"publix"},
+        {"name":"365 by Whole Foods Organic Chicken Breast","price":11.99,"size":"3 lb","url":"https://www.wholefoodsmarket.com/product/chicken","unitPrice":"$4.00/lb","store":"wholefoods"},
+        {"name":"H-E-B Boneless Chicken Breast","price":8.49,"size":"3 lb","url":"https://www.heb.com/product/chicken","unitPrice":"$2.83/lb","store":"heb"},
+    ],
+    "bread": [
+        {"name":"Great Value White Sandwich Bread","price":1.48,"size":"20 oz","url":"https://www.walmart.com/ip/bread","unitPrice":"$0.07/oz","store":"walmart"},
+        {"name":"Kroger White Sandwich Bread","price":1.69,"size":"20 oz","url":"https://www.kroger.com/p/bread","unitPrice":"$0.08/oz","store":"kroger"},
+        {"name":"Good & Gather White Sandwich Bread","price":1.79,"size":"20 oz","url":"https://www.target.com/p/bread","unitPrice":"$0.09/oz","store":"target"},
+        {"name":"L'oven Fresh White Bread","price":1.29,"size":"20 oz","url":"https://www.aldi.us/product/bread","unitPrice":"$0.06/oz","store":"aldi"},
+        {"name":"Lucerne White Sandwich Bread","price":1.99,"size":"20 oz","url":"https://www.albertsons.com/product/bread","unitPrice":"$0.10/oz","store":"albertsons"},
+        {"name":"Publix White Sandwich Bread","price":1.89,"size":"20 oz","url":"https://www.publix.com/product/bread","unitPrice":"$0.09/oz","store":"publix"},
+        {"name":"365 by Whole Foods Organic White Bread","price":2.49,"size":"20 oz","url":"https://www.wholefoodsmarket.com/product/bread","unitPrice":"$0.12/oz","store":"wholefoods"},
+        {"name":"H-E-B White Sandwich Bread","price":1.59,"size":"20 oz","url":"https://www.heb.com/product/bread","unitPrice":"$0.08/oz","store":"heb"},
+    ],
+    "butter": [
+        {"name":"Great Value Salted Butter","price":3.98,"size":"16 oz","url":"https://www.walmart.com/ip/butter","unitPrice":"$0.25/oz","store":"walmart"},
+        {"name":"Kroger Salted Butter","price":4.29,"size":"16 oz","url":"https://www.kroger.com/p/butter","unitPrice":"$0.27/oz","store":"kroger"},
+        {"name":"Good & Gather Salted Butter","price":4.19,"size":"16 oz","url":"https://www.target.com/p/butter","unitPrice":"$0.26/oz","store":"target"},
+        {"name":"Countryside Creamery Butter","price":3.49,"size":"16 oz","url":"https://www.aldi.us/product/butter","unitPrice":"$0.22/oz","store":"aldi"},
+        {"name":"Lucerne Salted Butter","price":4.49,"size":"16 oz","url":"https://www.albertsons.com/product/butter","unitPrice":"$0.28/oz","store":"albertsons"},
+        {"name":"Publix Salted Butter","price":4.39,"size":"16 oz","url":"https://www.publix.com/product/butter","unitPrice":"$0.27/oz","store":"publix"},
+        {"name":"365 by Whole Foods Organic Butter","price":5.29,"size":"16 oz","url":"https://www.wholefoodsmarket.com/product/butter","unitPrice":"$0.33/oz","store":"wholefoods"},
+        {"name":"H-E-B Salted Butter","price":3.79,"size":"16 oz","url":"https://www.heb.com/product/butter","unitPrice":"$0.24/oz","store":"heb"},
+    ],
+    "ground beef": [
+        {"name":"Great Value 80/20 Ground Beef","price":4.98,"size":"1 lb","url":"https://www.walmart.com/ip/ground-beef","unitPrice":"$4.98/lb","store":"walmart"},
+        {"name":"Kroger 80/20 Ground Beef","price":5.49,"size":"1 lb","url":"https://www.kroger.com/p/ground-beef","unitPrice":"$5.49/lb","store":"kroger"},
+        {"name":"Good & Gather 80/20 Ground Beef","price":5.29,"size":"1 lb","url":"https://www.target.com/p/ground-beef","unitPrice":"$5.29/lb","store":"target"},
+        {"name":"Simply Nature 85/15 Ground Beef","price":4.79,"size":"1 lb","url":"https://www.aldi.us/product/ground-beef","unitPrice":"$4.79/lb","store":"aldi"},
+        {"name":"Lucerne 80/20 Ground Beef","price":5.79,"size":"1 lb","url":"https://www.albertsons.com/product/ground-beef","unitPrice":"$5.79/lb","store":"albertsons"},
+        {"name":"Publix 80/20 Ground Beef","price":5.69,"size":"1 lb","url":"https://www.publix.com/product/ground-beef","unitPrice":"$5.69/lb","store":"publix"},
+        {"name":"365 by Whole Foods Organic Ground Beef","price":6.99,"size":"1 lb","url":"https://www.wholefoodsmarket.com/product/ground-beef","unitPrice":"$6.99/lb","store":"wholefoods"},
+        {"name":"H-E-B 80/20 Ground Beef","price":4.99,"size":"1 lb","url":"https://www.heb.com/product/ground-beef","unitPrice":"$4.99/lb","store":"heb"},
+    ],
+    "coffee": [
+        {"name":"Great Value Classic Roast Coffee","price":7.98,"size":"30.5 oz","url":"https://www.walmart.com/ip/coffee","unitPrice":"$0.26/oz","store":"walmart"},
+        {"name":"Kroger Classic Roast Coffee","price":8.49,"size":"30.5 oz","url":"https://www.kroger.com/p/coffee","unitPrice":"$0.28/oz","store":"kroger"},
+        {"name":"Good & Gather Classic Roast Coffee","price":8.29,"size":"30.5 oz","url":"https://www.target.com/p/coffee","unitPrice":"$0.27/oz","store":"target"},
+        {"name":"Beaumont Classic Roast Coffee","price":6.99,"size":"30.5 oz","url":"https://www.aldi.us/product/coffee","unitPrice":"$0.23/oz","store":"aldi"},
+        {"name":"Lucerne Classic Roast Coffee","price":8.99,"size":"30.5 oz","url":"https://www.albertsons.com/product/coffee","unitPrice":"$0.29/oz","store":"albertsons"},
+        {"name":"Publix Classic Roast Coffee","price":8.69,"size":"30.5 oz","url":"https://www.publix.com/product/coffee","unitPrice":"$0.28/oz","store":"publix"},
+        {"name":"365 by Whole Foods Organic Coffee","price":10.49,"size":"24 oz","url":"https://www.wholefoodsmarket.com/product/coffee","unitPrice":"$0.44/oz","store":"wholefoods"},
+        {"name":"H-E-B Cafe Ole Coffee","price":7.49,"size":"30.5 oz","url":"https://www.heb.com/product/coffee","unitPrice":"$0.25/oz","store":"heb"},
+    ],
+    "bananas": [
+        {"name":"Great Value Bananas","price":0.52,"size":"1 lb","url":"https://www.walmart.com/ip/bananas","unitPrice":"$0.52/lb","store":"walmart"},
+        {"name":"Kroger Bananas","price":0.59,"size":"1 lb","url":"https://www.kroger.com/p/bananas","unitPrice":"$0.59/lb","store":"kroger"},
+        {"name":"Good & Gather Bananas","price":0.55,"size":"1 lb","url":"https://www.target.com/p/bananas","unitPrice":"$0.55/lb","store":"target"},
+        {"name":"Fresh Bananas","price":0.45,"size":"1 lb","url":"https://www.aldi.us/product/bananas","unitPrice":"$0.45/lb","store":"aldi"},
+        {"name":"Lucerne Bananas","price":0.69,"size":"1 lb","url":"https://www.albertsons.com/product/bananas","unitPrice":"$0.69/lb","store":"albertsons"},
+        {"name":"Publix Bananas","price":0.65,"size":"1 lb","url":"https://www.publix.com/product/bananas","unitPrice":"$0.65/lb","store":"publix"},
+        {"name":"365 by Whole Foods Organic Bananas","price":0.79,"size":"1 lb","url":"https://www.wholefoodsmarket.com/product/bananas","unitPrice":"$0.79/lb","store":"wholefoods"},
+        {"name":"H-E-B Bananas","price":0.49,"size":"1 lb","url":"https://www.heb.com/product/bananas","unitPrice":"$0.49/lb","store":"heb"},
     ],
 }
 
-STORE_ORDER = ["aldi", "walmart", "heb", "target", "kroger", "publix", "albertsons", "wholefoods"]
-
-def get_demo_results(query: str) -> tuple[list, dict]:
-    """Return realistic demo data for common grocery queries"""
+def get_demo_results(query: str, stores: list[str] = None) -> tuple[list, dict]:
     q = query.lower().strip()
-    # Find best matching demo key
     for key in DEMO_ITEMS:
         if key in q or q in key:
-            items = []
+            items = [it for it in DEMO_ITEMS[key] if not stores or it["store"] in stores]
             results = {}
-            for i, item in enumerate(DEMO_ITEMS[key]):
-                store = STORE_ORDER[i % len(STORE_ORDER)]
-                entry = {**item, "store": store}
-                items.append(entry)
+            for item in items:
+                store = item["store"]
                 results[store] = StoreResult(count=1, status="demo")
             return items, results
-
-    # Generic fallback — generate plausible results
+    # Generic fallback
     items = []
     results = {}
+    all_stores = list(STORE_BRAND_MAP.keys())
     base_price = random.uniform(2.49, 5.99)
-    for i, store in enumerate(STORE_ORDER):
-        offset = (i - 3) * 0.35 + random.uniform(-0.20, 0.20)
-        price = round(base_price + offset, 2)
+    for store in all_stores:
+        meta = STORE_BRAND_MAP[store]
+        offset = (all_stores.index(store) - 3) * 0.35 + random.uniform(-0.20, 0.20)
+        price = round(max(1.49, base_price + offset), 2)
         item = {
-            "name": f"{store.title()} {query.title()}",
-            "price": max(1.49, price),
-            "size": random.choice(["16 oz", "1 lb", "12 ct", "1 gal", "8 oz"]),
+            "name": f"{meta['brand']} {query.title()}",
+            "price": price,
+            "size": random.choice(["16 oz", "1 lb", "12 ct", "1 gal"]),
             "url": f"https://www.{store}.com/search?q={query}",
-            "unitPrice": f"${max(1.49, price)/16:.2f}/oz" if "oz" in random.choice(["16 oz"]) else "",
+            "unitPrice": "",
+            "store": store,
         }
-        items.append({**item, "store": store})
+        items.append(item)
         results[store] = StoreResult(count=1, status="demo")
     return items, results
 
 # ===== Kroger Public API =====
-_kroger_token = None
-_kroger_token_expiry = 0
+_kroger_token, _kroger_token_expiry = None, 0
 
 async def kroger_get_token():
     global _kroger_token, _kroger_token_expiry
@@ -154,13 +216,12 @@ async def kroger_get_token():
         _kroger_token = data["access_token"]
         _kroger_token_expiry = time.time() + data.get("expires_in", 1800)
         return _kroger_token
-    except Exception as e:
-        return None
+    except: return None
 
 async def search_kroger(query: str, zipcode: str) -> tuple[list, StoreResult]:
     token = await kroger_get_token()
     if not token:
-        return [], StoreResult(count=0, status="no_credentials", error="Set KROGER_CLIENT_ID + KROGER_CLIENT_SECRET")
+        return [], StoreResult(count=0, status="no_credentials", error="Set KROGER_CLIENT_ID + KROGER_CLIENT_SECRET env vars")
     try:
         import urllib.request, urllib.parse
         loc_req = urllib.request.Request(
@@ -168,13 +229,11 @@ async def search_kroger(query: str, zipcode: str) -> tuple[list, StoreResult]:
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         loc_data = json.loads(urllib.request.urlopen(loc_req, timeout=10).read())
         location_id = loc_data.get("data", [{}])[0].get("locationId", "") if loc_data.get("data") else ""
-
         params = {"filter.term": query, "filter.limit": 10}
         if location_id: params["filter.locationId"] = location_id
         prod_url = f"https://api.kroger.com/v1/products?{urllib.parse.urlencode(params)}"
         prod_req = urllib.request.Request(prod_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         data = json.loads(urllib.request.urlopen(prod_req, timeout=10).read())
-
         results = []
         for product in data.get("data", [])[:10]:
             items = product.get("items", [{}])
@@ -224,19 +283,16 @@ async def search_with_curl(url: str, store: str) -> tuple[list, StoreResult]:
                            headers={"Accept": "text/html,application/json,*/*"}) as s:
             resp = await s.get(url)
             if resp.status_code == 403:
-                return [], StoreResult(count=0, status="blocked_403", error="Access denied (CAPTCHA)")
+                return [], StoreResult(count=0, status="blocked_403", error="Access denied")
             if resp.status_code == 412:
                 return [], StoreResult(count=0, status="blocked_412", error="Bot detection triggered")
             if resp.status_code == 429:
                 return [], StoreResult(count=0, status="rate_limited", error="Too many requests")
             if resp.status_code != 200:
                 return [], StoreResult(count=0, status=f"http_{resp.status_code}", error=f"HTTP {resp.status_code}")
-
             html = resp.text
             if "Robot or human" in html or "captcha" in html.lower():
                 return [], StoreResult(count=0, status="captcha", error="CAPTCHA challenge page")
-
-            # JSON-LD extraction
             results = []
             scripts = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
             for script in scripts:
@@ -252,10 +308,8 @@ async def search_with_curl(url: str, store: str) -> tuple[list, StoreResult]:
                         name = node.get("name", "")
                         if name and price:
                             results.append({
-                                "name": clean_name(name),
-                                "price": float(price),
-                                "size": node.get("description", ""),
-                                "image": node.get("image", ""),
+                                "name": clean_name(name), "price": float(price),
+                                "size": node.get("description", ""), "image": node.get("image", ""),
                                 "url": node.get("url", "") or offers.get("url", ""),
                                 "unitPrice": calc_unit_price(float(price), node.get("description", "")),
                                 "upc": node.get("gtin13") or node.get("sku"),
@@ -263,7 +317,7 @@ async def search_with_curl(url: str, store: str) -> tuple[list, StoreResult]:
                 except: pass
             filtered = [r for r in results if r["name"] and r["price"] > 0][:10]
             status = "ok" if filtered else "empty"
-            return filtered, StoreResult(count=len(filtered), status=status, error="" if filtered else "No products found on page")
+            return filtered, StoreResult(count=len(filtered), status=status, error="" if filtered else "No products on page")
     except Exception as e:
         err = str(e)[:80]
         if "Timeout" in str(type(e).__name__):
@@ -272,53 +326,43 @@ async def search_with_curl(url: str, store: str) -> tuple[list, StoreResult]:
             return [], StoreResult(count=0, status="connection_refused", error=err)
         return [], StoreResult(count=0, status="error", error=err)
 
-# ===== Endpoints =====
-@app.get("/")
-async def root():
+# ===== API Routes =====
+@app.get("/api")
+async def api_root():
     return {
-        "service": "CartRadar API v4",
-        "kroger_api": bool(KROGER_CLIENT_ID),
+        "service": "CartRadar v5",
         "demo_mode": DEMO_MODE,
+        "kroger_api": bool(KROGER_CLIENT_ID),
         "stores": list(STORE_URLS.keys()),
         "cache_ttl": CACHE_TTL,
+        "frontend": "/",
     }
 
-@app.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest):
+@app.post("/api/search", response_model=SearchResponse)
+async def api_search(req: SearchRequest):
     start = time.time()
-
-    # Check cache
     if not DEMO_MODE:
         cached_items, cached_results = cache_get(req.query, req.zipcode)
         if cached_items is not None:
             elapsed = (time.time() - start) * 1000
             return SearchResponse(items=cached_items, store_results=cached_results, elapsed_ms=round(elapsed,1), cached=True)
-
-    # Demo mode — instant, realistic results
     if DEMO_MODE:
-        items, results = get_demo_results(req.query)
-        elapsed = (time.time() - start) * 1000
-        return SearchResponse(items=items, store_results=results, elapsed_ms=round(elapsed,1), cached=False)
+        items, results = get_demo_results(req.query, req.stores)
+        return SearchResponse(items=items, store_results=results, elapsed_ms=round((time.time()-start)*1000, 1))
 
     all_items = []
     store_results = {}
-
-    # Kroger (Tier 1 — no curl_cffi)
     if not req.stores or "kroger" in req.stores:
         k_items, k_result = await search_kroger(req.query, req.zipcode)
         store_results["kroger"] = k_result
         for item in k_items: item["store"] = "kroger"
         all_items.extend(k_items)
-
-    # Tier 2/3 stores (curl_cffi)
     curl_stores = {k: v for k, v in STORE_URLS.items() if k != "kroger"}
-    # Filter by stores param if provided
     if req.stores:
         curl_stores = {k: v for k, v in curl_stores.items() if k in req.stores}
     tasks = [search_with_curl(build(req.query, req.zipcode), name) for name, build in curl_stores.items()]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for (name, _), result in zip(curl_stores.items(), results):
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+    for (name, _), result in zip(curl_stores.items(), results_list):
         if isinstance(result, Exception):
             store_results[name] = StoreResult(count=0, status="exception", error=str(result)[:80])
         else:
@@ -326,23 +370,21 @@ async def search(req: SearchRequest):
             store_results[name] = s_result
             for item in items: item["store"] = name
             all_items.extend(items)
-
     elapsed = (time.time() - start) * 1000
-
-    # Cache (only if we got real data)
     if all_items and not DEMO_MODE:
         cache_set(req.query, req.zipcode, all_items, store_results)
+    return SearchResponse(items=all_items, store_results=store_results, elapsed_ms=round(elapsed,1))
 
-    return SearchResponse(items=all_items, store_results=store_results, elapsed_ms=round(elapsed,1), cached=False)
+# ===== Mount frontend AFTER API routes =====
+app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="frontend")
 
 if __name__ == "__main__":
-    import uvicorn, io, codecs
+    import uvicorn
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    print("CartRadar API v4")
-    print(f"   DEMO_MODE: {'ON (mock data)' if DEMO_MODE else 'OFF (live scraping)'}")
-    print(f"   Kroger API: {'OK' if KROGER_CLIENT_ID else 'set KROGER_CLIENT_ID'}")
-    print(f"   Cache TTL: {CACHE_TTL}s")
-    print(f"   Stores: {list(STORE_URLS.keys())}")
-    print(f"   http://localhost:8765")
-    port = int(os.getenv("PORT", "8765"))
+    print("🛒 CartRadar v5 — Single URL App")
+    print(f"   Open: http://localhost:{os.getenv('PORT','8766')}")
+    print(f"   Demo: {'ON' if DEMO_MODE else 'OFF (needs proxies)'}")
+    print(f"   Kroger: {'Ready' if KROGER_CLIENT_ID else 'Set KROGER_CLIENT_ID+SECRET'}")
+    print(f"   {len(DEMO_ITEMS)} demo categories: {', '.join(DEMO_ITEMS.keys())}")
+    port = int(os.getenv("PORT", "8766"))
     uvicorn.run(app, host="0.0.0.0", port=port)
