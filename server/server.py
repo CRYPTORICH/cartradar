@@ -17,10 +17,7 @@ CACHE_TTL = 300
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
 KROGER_CLIENT_ID = os.getenv("KROGER_CLIENT_ID", "")
 KROGER_CLIENT_SECRET = os.getenv("KROGER_CLIENT_SECRET", "")
-WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
-# Fix for EC2 deployment where server.py is in root dir
-if not os.path.exists(WEB_DIR):
-    WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 class SearchRequest(BaseModel):
     query: str
@@ -386,5 +383,5 @@ if __name__ == "__main__":
     print(f"   Demo: {'ON' if DEMO_MODE else 'OFF (needs proxies)'}")
     print(f"   Kroger: {'Ready' if KROGER_CLIENT_ID else 'Set KROGER_CLIENT_ID+SECRET'}")
     print(f"   {len(DEMO_ITEMS)} demo categories: {', '.join(DEMO_ITEMS.keys())}")
-    port = int(os.getenv("PORT", "8766"))
+    port = int(os.getenv("PORT", "8770"))
     uvicorn.run(app, host="0.0.0.0", port=port)

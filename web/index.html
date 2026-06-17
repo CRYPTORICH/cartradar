@@ -138,6 +138,8 @@
 
     footer{text-align:center;padding:40px 20px 20px;font-size:11px;color:var(--text-muted)}
     footer a{color:var(--green);text-decoration:none}footer a:hover{text-decoration:underline}
+    .popular-chip{padding:5px 12px;border-radius:16px;background:var(--bg);border:1px solid var(--border);cursor:pointer;transition:all .15s;color:var(--text-soft);font-weight:500}
+    .popular-chip:hover{background:var(--green-bg);border-color:var(--green-border);color:var(--green)}
 
     /* Mobile */
     @media(max-width:600px){
@@ -169,6 +171,17 @@
       <button id="search-btn">Compare Prices</button>
     </div>
     <div class="store-toggles" id="store-toggles"></div>
+    <div class="popular-searches" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--text-muted)">
+      <span style="font-weight:600;margin-right:4px">Popular:</span>
+      <span class="popular-chip" onclick="trySearch('milk')">🥛 milk</span>
+      <span class="popular-chip" onclick="trySearch('eggs')">🥚 eggs</span>
+      <span class="popular-chip" onclick="trySearch('bread')">🍞 bread</span>
+      <span class="popular-chip" onclick="trySearch('chicken')">🍗 chicken</span>
+      <span class="popular-chip" onclick="trySearch('butter')">🧈 butter</span>
+      <span class="popular-chip" onclick="trySearch('ground beef')">🥩 ground beef</span>
+      <span class="popular-chip" onclick="trySearch('bananas')">🍌 bananas</span>
+      <span class="popular-chip" onclick="trySearch('coffee')">☕ coffee</span>
+    </div>
   </div>
 
   <div class="status-bar" id="status"></div>
