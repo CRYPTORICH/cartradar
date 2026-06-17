@@ -1,0 +1,83 @@
+{
+  "manifest_version": 3,
+  "name": "CartRadar — Find the Cheapest Groceries Near You",
+  "version": "1.0.0",
+  "description": "Real-time grocery price comparison across 8 major US grocery chains. Search once, see every price.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://www.walmart.com/*",
+    "https://www.kroger.com/*",
+    "https://www.target.com/*",
+    "https://www.aldi.us/*",
+    "https://www.albertsons.com/*",
+    "https://www.safeway.com/*",
+    "https://www.publix.com/*",
+    "https://www.wholefoodsmarket.com/*",
+    "https://www.heb.com/*",
+    "https://developer.kroger.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.walmart.com/*"],
+      "js": ["stores/walmart.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.kroger.com/*"],
+      "js": ["stores/kroger.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.target.com/*"],
+      "js": ["stores/target.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.aldi.us/*"],
+      "js": ["stores/aldi.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.albertsons.com/*", "https://www.safeway.com/*"],
+      "js": ["stores/albertsons.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.publix.com/*"],
+      "js": ["stores/publix.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.wholefoodsmarket.com/*"],
+      "js": ["stores/wholefoods.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.heb.com/*"],
+      "js": ["stores/heb.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

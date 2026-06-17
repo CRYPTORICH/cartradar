@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1><span class="cart">🛒</span> CartRadar</h1>
+      <p class="subtitle">Find the cheapest groceries near you</p>
+    </header>
+
+    <div class="search-bar">
+      <input type="text" id="query" placeholder="Search any grocery item..." autofocus>
+      <input type="text" id="zipcode" placeholder="ZIP code" maxlength="5">
+      <button id="search-btn">Search All Stores</button>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="results">
+      <div class="results-header">
+        <span class="store-col">Store</span>
+        <span class="item-col">Item</span>
+        <span class="price-col">Price</span>
+        <span class="unit-col">Unit Price</span>
+      </div>
+      <div id="results-list"></div>
+    </div>
+
+    <div id="empty-state">
+      <p>🔍 Search across Walmart, Kroger, Target &amp; more</p>
+      <p class="small">Real-time prices in your area</p>
+    </div>
+
+    <footer>
+      <span class="stores-active">🟢 Walmart &nbsp; 🟢 Kroger &nbsp; 🟢 Target &nbsp; 🟢 Aldi &nbsp; 🟢 Albertsons &nbsp; 🟢 Publix &nbsp; 🟢 Whole Foods &nbsp; 🟢 H-E-B</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

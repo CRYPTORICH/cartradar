@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>CartRadar — Find the Cheapest Groceries Near You</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --bg:#fafaf9;--card:#ffffff;--border:#e7e5e4;--border-strong:#d6d3d1;
+      --text:#1c1917;--text-soft:#57534e;--text-muted:#a8a29e;
+      --green:#16a34a;--green-bg:#f0fdf4;--green-border:#bbf7d0;
+      --red:#dc2626;--red-bg:#fef2f2;--amber:#d97706;--amber-bg:#fffbeb;
+      --blue:#2563eb;--blue-bg:#eff6ff;--purple:#7c3aed;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.04);--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+      --shadow-md:0 4px 6px -1px rgba(0,0,0,.06),0 2px 4px -2px rgba(0,0,0,.04);
+      --shadow-lg:0 10px 15px -3px rgba(0,0,0,.06),0 4px 6px -4px rgba(0,0,0,.04);
+      --radius:14px;--radius-sm:10px;--radius-xs:8px;
+    }
+    body{
+      font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5;
+      -webkit-font-smoothing:antialiased;
+    }
+    .app{max-width:720px;margin:0 auto;padding:24px 16px 80px}
+
+    /* Header */
+    .header{text-align:center;padding:20px 0 24px}
+    .header .logo{font-size:32px;font-weight:800;letter-spacing:-0.5px;color:var(--text)}
+    .header .logo span{color:var(--green)}
+    .header p{color:var(--text-soft);font-size:15px;margin-top:4px;line-height:1.5}
+
+    /* Hero stat — how much people waste */
+    .waste-banner{text-align:center;padding:14px 20px;margin-bottom:20px;
+      background:var(--amber-bg);border:1px solid #fde68a;border-radius:var(--radius-xs);
+      font-size:13px;color:var(--amber);font-weight:500;line-height:1.5}
+    .waste-banner strong{color:#b45309}
+
+    /* Search */
+    .search-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+      padding:20px;box-shadow:var(--shadow-sm);margin-bottom:20px}
+    .search-row{display:flex;gap:10px;align-items:center}
+    .search-row input,.search-row button{padding:14px 18px;border-radius:var(--radius-xs);font-size:15px;font-family:inherit;transition:all .2s}
+    .search-row #query{flex:1;min-width:0;background:var(--bg);border:1.5px solid var(--border);color:var(--text)}
+    .search-row #query:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(22,163,74,.1)}
+    #zip{width:110px;min-width:100px;text-align:center;background:var(--bg);border:1.5px solid var(--border);color:var(--text)}
+    #zip:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(22,163,74,.1)}
+    #zip.loading{color:var(--blue)}
+    .search-row button{padding:14px 28px;border:none;background:var(--green);color:#fff;font-weight:600;cursor:pointer;white-space:nowrap;letter-spacing:-0.2px}
+    .search-row button:hover{background:#15803d;transform:translateY(-1px);box-shadow:var(--shadow-md)}
+    .search-row button:active{transform:translateY(0)}
+    .search-row button:disabled{background:var(--border);color:var(--text-muted);cursor:not-allowed;transform:none;box-shadow:none}
+
+    /* Store toggles */
+    .store-toggles{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+    .store-toggle{display:flex;align-items:center;gap:6px;padding:7px 13px;border-radius:20px;
+      background:var(--bg);border:1.5px solid var(--border);font-size:12px;font-weight:500;
+      cursor:pointer;color:var(--text-soft);transition:all .15s;user-select:none;font-family:inherit}
+    .store-toggle:hover{border-color:var(--green);color:var(--text)}
+    .store-toggle.active{background:var(--green-bg);color:var(--green);border-color:var(--green-border);font-weight:600}
+    .store-toggle input{display:none}
+    .store-toggle .dot{width:8px;height:8px;border-radius:50%;background:var(--text-muted)}
+    .store-toggle.active .dot{background:var(--green)}
+
+    /* Status */
+    .status-bar{font-size:12px;color:var(--text-muted);min-height:20px;margin-bottom:16px;text-align:center}
+    .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* Results — Card layout */
+    .results-section{display:none}
+    .results-section.show{display:block}
+
+    .summary-bar{display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;
+      background:var(--green-bg);border:1px solid var(--green-border);border-radius:var(--radius-sm);
+      font-size:14px;font-weight:600;color:var(--green)}
+    .summary-bar .savings-highlight{font-size:28px;font-weight:800;margin-right:4px}
+
+    .result-grid{display:flex;flex-direction:column;gap:10px}
+
+    .result-card{background:var(--card);border:2px solid var(--border);border-radius:var(--radius);
+      padding:16px 18px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px;
+      position:relative;box-shadow:var(--shadow-sm)}
+    .result-card:hover{border-color:var(--green);box-shadow:var(--shadow-md);transform:translateY(-1px)}
+    .result-card.best-deal{border-color:var(--green);background:var(--green-bg);box-shadow:0 0 0 1px rgba(22,163,74,.15)}
+    .result-card.best-deal::before{content:'Best Deal';position:absolute;top:-10px;right:16px;
+      background:var(--green);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;
+      border-radius:10px;text-transform:uppercase;letter-spacing:.5px}
+
+    .store-badge{flex-shrink:0;width:52px;height:52px;border-radius:var(--radius-xs);
+      display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;
+      color:#fff;letter-spacing:-0.3px;text-align:center;line-height:1.2}
+    .sb-walmart{background:#0071dc}.sb-kroger{background:#1a4a8c}
+    .sb-target{background:#c00}.sb-aldi{background:#e67e00}
+    .sb-albertsons{background:#e31837}.sb-publix{background:#398467}
+    .sb-wholefoods{background:#116644}.sb-heb{background:#e31837}
+
+    .result-info{flex:1;min-width:0}
+    .result-name{font-weight:600;font-size:14px;color:var(--text);line-height:1.3;margin-bottom:2px}
+    .result-size{font-size:11px;color:var(--text-muted)}
+
+    .result-price-col{text-align:right;flex-shrink:0}
+    .result-price{font-size:22px;font-weight:800;color:var(--text);line-height:1}
+    .result-unit{font-size:11px;color:var(--text-muted);margin-top:2px}
+    .result-savings{margin-top:4px;font-size:11px;font-weight:600}
+    .result-savings.bad{color:var(--red)}
+    .result-savings.good{color:var(--green)}
+
+    .yearly-loss{font-size:10px;color:var(--text-muted);margin-top:2px;line-height:1.3}
+
+    .result-arrow{flex-shrink:0;color:var(--text-muted);font-size:16px}
+
+    /* Breakdown strip */
+    .breakdown-strip{display:flex;flex-wrap:wrap;gap:5px;margin-top:20px;padding:10px 0;font-size:11px}
+    .breakdown-strip .bd-item{padding:3px 10px;border-radius:12px;background:var(--bg);border:1px solid var(--border);color:var(--text-soft)}
+    .breakdown-strip .bd-item.ok{color:var(--green);border-color:var(--green-border)}
+    .breakdown-strip .bd-item.fail{color:var(--red);border-color:#fecaca}
+
+    /* Empty state */
+    .empty{text-align:center;padding:60px 20px;color:var(--text-muted)}
+    .empty .icon{font-size:48px;margin-bottom:12px}
+    .empty h3{font-size:17px;margin-bottom:6px;color:var(--text);font-weight:700}
+    .empty p{font-size:13px;max-width:400px;margin:0 auto;line-height:1.6}
+    .empty .tips{margin-top:20px;text-align:left;max-width:340px;margin-left:auto;margin-right:auto}
+    .empty .tips li{font-size:12px;padding:4px 0;color:var(--text-soft)}
+
+    /* How it works */
+    .how-it-works{margin-top:40px;text-align:center}
+    .how-it-works h3{font-size:14px;font-weight:700;color:var(--text);margin-bottom:16px}
+    .steps{display:flex;gap:20px;justify-content:center;flex-wrap:wrap}
+    .step{flex:1;min-width:140px;max-width:200px;text-align:center}
+    .step .step-icon{font-size:32px;margin-bottom:8px}
+    .step .step-title{font-weight:600;font-size:13px;margin-bottom:2px}
+    .step .step-desc{font-size:11px;color:var(--text-muted);line-height:1.4}
+
+    footer{text-align:center;padding:40px 20px 20px;font-size:11px;color:var(--text-muted)}
+    footer a{color:var(--green);text-decoration:none}footer a:hover{text-decoration:underline}
+
+    /* Mobile */
+    @media(max-width:600px){
+      .header .logo{font-size:26px}
+      .search-row{flex-wrap:wrap}
+      #zip{width:100%}
+      .search-row button{width:100%}
+      .result-card{padding:14px}
+      .result-price{font-size:19px}
+      .store-badge{width:44px;height:44px;font-size:10px}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="logo">🛒 <span>Cart</span>Radar</div>
+    <p>Compare grocery prices across every store near you — like GasBuddy, but for food</p>
+  </header>
+
+  <div class="waste-banner">
+    💸 The average American household <strong>overpays $800–1,200/year</strong> on groceries by shopping at the wrong store for each item
+  </div>
+
+  <div class="search-card">
+    <div class="search-row">
+      <input type="text" id="query" placeholder="What are you shopping for? (e.g. milk, eggs, chicken)" autofocus>
+      <input type="text" id="zip" placeholder="ZIP" maxlength="5">
+      <button id="search-btn">Compare Prices</button>
+    </div>
+    <div class="store-toggles" id="store-toggles"></div>
+  </div>
+
+  <div class="status-bar" id="status"></div>
+
+  <div class="empty" id="empty">
+    <div class="icon">🔍</div>
+    <h3>See who has the best price — instantly</h3>
+    <p>Type any grocery item and your ZIP code. We check 8 major chains so you always know where to shop.</p>
+    <ul class="tips">
+      <li>🥛 Try: milk, eggs, bread, chicken breast</li>
+      <li>📍 Enter your ZIP to see prices at stores near you</li>
+      <li>💰 Green = best deal. Red = you're overpaying.</li>
+    </ul>
+  </div>
+
+  <div class="results-section" id="results-section">
+    <div class="summary-bar" id="summary"></div>
+    <div class="result-grid" id="result-grid"></div>
+    <div class="breakdown-strip" id="breakdown"></div>
+  </div>
+
+  <div class="how-it-works">
+    <h3>How It Works</h3>
+    <div class="steps">
+      <div class="step"><div class="step-icon">🔍</div><div class="step-title">Search any item</div><div class="step-desc">Type what you need — milk, eggs, bread</div></div>
+      <div class="step"><div class="step-icon">📍</div><div class="step-title">Enter your ZIP</div><div class="step-desc">We check stores that actually exist near you</div></div>
+      <div class="step"><div class="step-icon">🛒</div><div class="step-title">See who's cheapest</div><div class="step-desc">Green card = best deal. Tap to buy online.</div></div>
+      <div class="step"><div class="step-icon">💰</div><div class="step-title">Save every trip</div><div class="step-desc">Know which store to visit before you leave home</div></div>
+    </div>
+  </div>
+
+  <footer>
+    CartRadar — open source grocery price comparison · <a href="#">GitHub</a>
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
